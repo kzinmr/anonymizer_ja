@@ -23,7 +23,7 @@ class CompanyMatcher(MecabMatcher):
 
     def parse(self, text):
         np_list = super().parse(text)
-        print(np_list)
+        # print(np_list)
         candidates_list = []
         for nounphrase in np_list:
             # 応用依存の前処理
@@ -38,7 +38,7 @@ class CompanyMatcher(MecabMatcher):
                 nounphrase,
             ):
                 candidates_list.append(nounphrase)
-        print(candidates_list)
+        # print(candidates_list)
         # 応用依存の後処理
         candidates_list_postprocessed = []
         for nounphrase in candidates_list:

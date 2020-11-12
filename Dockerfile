@@ -44,7 +44,7 @@ RUN git clone --depth 1 https://github.com/neologd/mecab-ipadic-neologd.git /tmp
 RUN echo "すもももももももものうち中居正広"|mecab -d /usr/lib/x86_64-linux-gnu/mecab/dic/mecab-ipadic-neologd
 
 RUN mkdir data
-COPY data/text.txt data/
+COPY data/*.jsonl data/
 COPY *.py ./
 
 CMD ["python3", "app.py"]
