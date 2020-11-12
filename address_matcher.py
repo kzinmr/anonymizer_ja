@@ -1,3 +1,5 @@
+from typing import Dict, Generator, List, Tuple
+
 import regex as re
 import pandas as pd
 
@@ -7,7 +9,7 @@ class AddressMatcher:
         self.pref_city_addr_matcher = self.geolonia_dataset()
 
     @staticmethod
-    def geolonia_dataset():
+    def geolonia_dataset() -> Dict:
         url = "https://raw.githubusercontent.com/geolonia/japanese-addresses/master/data/latest.csv"
         address_df = pd.read_csv(url)
         pref_city_addr = address_df[["都道府県名", "市区町村名", "大字町丁目名"]]
@@ -29,7 +31,9 @@ class AddressMatcher:
         else:
             return None
 
-    def match_address(self, text, partial=True):
+    def match_address(
+        self, text: str, partial: bool = True
+    ) -> Generator[Tuple[int, int], None, None]:
         text = re.sub(
             "([1-9])丁目", self.ksuji, text
         )  # unicodedata.normalize('NFKC', text)
@@ -63,7 +67,9 @@ class AddressMatcher:
                                             yield addr_span
 
     @staticmethod
-    def adjunct_address(text, spans, margin=10):
+    def adjunct_address(
+        text: str, spans: Tuple[int, int], margin: int = 10
+    ) -> Generator[Tuple[int, int], None, None]:
         address_numbers = re.compile(
             r"^\p{N}+-\p{N}+-\p{N}+|"
             "^\p{N}+-\p{N}+|"
@@ -82,28 +88,9 @@ class AddressMatcher:
             else:
                 yield (b, e)
 
-    def match_spans(self, text):
+    def match_spans(self, text: str) -> List[Tuple[int, int]]:
         return list(self.adjunct_address(text, list(self.match_address(text))))
 
-    def match_text_spans(self, texts, filter_empty=True):
-        text_spans = [(text, self.match_spans(text)) for text in texts]
-        if filter_empty:
-            return [(t, ss) for t, ss in text_spans if len(ss) > 0]
-        else:
-            return text_spans_full
-
-
-if __name__ == "__main__":
-    import tensorflow_datasets as tfds
-
-    dataset, dataset_info = tfds.load(
-        name="wikipedia/20190301.ja",
-        data_dir="tmp",
-        with_info=True,
-        split=tfds.Split.TRAIN,
-    )
-
-    am = AddressMatcher()
-    texts = [example["text"].numpy().decode("utf-8") for example in dataset.take(100)]
-    text_spans_full = am.match_text_spans(texts)
-    print(text_spans_full)
+    def parse(self, text: str) -> List[List[str]]:
+        # TODO: 名寄せ機能
+        return [[text[s:e].strip()] for s, e in self.match_spans(text)]

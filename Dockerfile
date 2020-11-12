@@ -45,5 +45,6 @@ RUN echo "すもももももももものうち中居正広"|mecab -d /usr/lib/x8
 
 RUN mkdir data
 COPY data/text.txt data/
-COPY app.py .
+COPY *.py ./
+
 CMD ["python3", "app.py"]
