@@ -1,5 +1,6 @@
 import json
 import jsonlines
+import regex as re
 from address_matcher import AddressMatcher
 from company_matcher import CompanyMatcher
 from person_matcher import PersonMatcher
