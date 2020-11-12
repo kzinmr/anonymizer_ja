@@ -67,5 +67,5 @@ if __name__ == "__main__":
     span_jsons = convert_spans(outputs)
     with jsonlines.open("/app/data/predict_spans.jsonl", "w", dumps=jsonl_ja) as fp:
         fp.write_all(span_jsons)
-    print(output[-1])
+    print(outputs[-1])
     print(span_jsons[-1])
