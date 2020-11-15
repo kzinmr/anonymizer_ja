@@ -3,3 +3,6 @@ ipadic
 pandas
 regex
 jsonlines
+pytokenizations
+seqeval
+ginza
