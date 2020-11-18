@@ -1,10 +1,12 @@
 # Convert CoNLL2003-like column data to chunks and spans
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
 import json
 import re
 import MeCab
 import pandas as pd
+import requests
 import spacy
 import tokenizations
 from seqeval.metrics import classification_report
@@ -111,7 +113,6 @@ class Sentence(Iterable[Token]):
 class ConllConverter:
     def __init__(self, tokenizer):
         self.tokenizer = tokenizer
-        
 
     def tokenize(self, text: str) -> List[str]:
         return self.tokenizer.tokenize(text)
@@ -133,7 +134,7 @@ class ConllConverter:
         chunk_spans: List[Tuple[int, int]],
         chunk_labels: List[str],
     ) -> List[str]:
-        """chunk単位のラベルから、token単位のラベルを構成"""
+        """chunk単位のNE-typeラベルから、token単位のBIOラベルを構成"""
 
         chunkspan2tagtype = dict(zip(chunk_spans, chunk_labels))
 
@@ -172,37 +173,39 @@ class ConllConverter:
 
         # 各tokenがtextのどこにあるか(token_spans)を計算
         token_spans = tokenizations.get_original_spans(tokens, text)
+        # assertion
+        spannedtokens = [text[span[0] : span[1]] for span in token_spans]
+        assert spannedtokens == tokens
 
         # 各tokenに対応するchunk NE-typeを同定(token-span vs chunk-span の包含関係計算)
         token_labels = self.get_token_labels(token_spans, chunk_spans, chunk_labels)
 
         # CoNLL2003-likeなtoken行単位の列データを返す
-        token_label_columns = [
-            (token, label) for token, label in zip(tokens, token_labels)
-        ]
-        # 計算したspanが合ってるかのassertion
-        spannedtoken_label_columns = [
-            (text[span[0] : span[1]], label)
-            for span, label in zip(token_spans, token_labels)
-        ]
-        assert spannedtoken_label_columns == token_label_columns
+        return [(token, label) for token, label in zip(tokens, token_labels)]
 
-        return token_label_columns
 
 class MecabTokenizer:
     def __init__(self):
         self.tagger = MeCab.Tagger("-Owakati")
+
     def tokenize(self, text: str) -> List[str]:
         return self.tagger.parse(text).split()
 
+
 class SpacyTokenizer:
-    def __init__(self):
-        self.nlp = spacy.load('ja_ginza')
+    def __init__(self, nlp=None):
+        if nlp is None:
+            self.nlp = spacy.load("ja_ginza")
+        else:
+            self.nlp = nlp
+
     def tokenize(self, text: str) -> List[str]:
         doc = self.nlp(text)
         return [token.text for token in doc]
 
+
 def make_sentences_from_conll(conll_filepath: str) -> List[Sentence]:
+    """conll (token-label columns) -> sentences (token-span-label containers)"""
     with open(conll_filepath) as fp:
         sentences = fp.read().split("\n\n")
         sentences = [
@@ -217,7 +220,9 @@ def make_sentences_from_conll(conll_filepath: str) -> List[Sentence]:
         ]
         return [s for s in sentences if s.text]
 
-def sentence_to_conll(sentences: List[Sentence], tokenizer = None) -> str:
+
+def retokenize_sentences(sentences: List[Sentence], tokenizer=None) -> str:
+    """sentences -> re-tokenization -> conll"""
     if tokenizer is None:
         tokenizer = MecabTokenizer()
     conll = ConllConverter(tokenizer)
@@ -231,28 +236,22 @@ def sentence_to_conll(sentences: List[Sentence], tokenizer = None) -> str:
         sentence_column: List[Tuple[str, str]] = conll.tokenize_and_align_spans(
             text, chunk_spans, chunk_tagtypes
         )
-        sentence_column_str = '\n'.join([f"{token}\t{label}" for token, label in sentence_column])
-        sentence_columns.append(sentence_column_str + '\n')
-    return '\n'.join(sentence_columns)
+        sentence_column_str = "\n".join(
+            [f"{token}\t{label}" for token, label in sentence_column]
+        )
+        sentence_columns.append(sentence_column_str + "\n")
+    return "\n".join(sentence_columns)
 
-def convert_tokenization(filepath: str) -> str:
-    """usage:
-    filepath = 'data/jumanpp.bio'
-    new_conll_j = convert_tokenization(filepath)
-    with open('data/sudachi.bio', 'w') as fp:
-        fp.write(new_conll_j)
+
+def evaluate_ginza(
+    filepath: str, as_ontonote: bool = False, retokenize: bool = False
+) -> Tuple[List[str], List[str]]:
+    """filepath: conll2003-like token and bio columns dataset
+    If different tokenization is used, pass retokenize=True.
+    If you want to evaluate the result as OntoNote5 scheme, pass as_ontonote=True.
+    Especially, UD Japanese GSD dataset uses OntoNote5, while GiNZA outputs ENE scheme.
     """
-    sentences: List[Sentence] = make_sentences_from_conll(filepath)
-    tokenizer = SpacyTokenizer()
-    new_conll = sentence_to_conll(sentences, tokenizer)
-    return new_conll
-
-
-def evaluate_ginza(filepath: str, as_ontonote:bool=False):
-    """ filepath: conll2003-like tokenwise bio dataset
-    If different tokenization is used, apply convert_tokenization first.
-    """
-    nlp = spacy.load('ja_ginza')
+    nlp = spacy.load("ja_ginza")
 
     def parse(sentence: str) -> dict:
         doc = nlp(sentence)
@@ -267,69 +266,84 @@ def evaluate_ginza(filepath: str, as_ontonote:bool=False):
         }
 
     def map2ontonote(tag: str) -> str:
-        if tag == 'O':
+        if tag == "O":
             return tag
-        elif len(tag.split('-'))==2:
-            prefix, tagtype = tag.split('-')
+        elif len(tag.split("-")) == 2:
+            prefix, tagtype = tag.split("-")
             if tagtype in ENE_ONTONOTES_MAPPING:
                 tagtype = ENE_ONTONOTES_MAPPING[tagtype]
-            return f'{prefix}-{tagtype}'
+            return f"{prefix}-{tagtype}"
         else:
-            print('invalid tag')
-            return 'O'
+            print("invalid tag")
+            return "O"
+
+    if retokenize:
+        tokenizer = SpacyTokenizer(nlp)
+        sentences: List[Sentence] = make_sentences_from_conll(filepath)
+        new_conll = retokenize_sentences(sentences, tokenizer)
+        filepath = filepath + ".retokenize"
+        with open(filepath, "w") as fp:
+            fp.write(new_conll)
 
     sentences = make_sentences_from_conll(filepath)
     results = [parse(s.text) for s in sentences]
-    pred = [r['tags'] for r in results]
+    pred = [r["tags"] for r in results]
     gold = [iob_to_biluo([t.label for t in s]) for s in sentences]
     if as_ontonote:
         pred = [list(map(map2ontonote, tags)) for tags in pred]
         gold = [list(map(map2ontonote, tags)) for tags in gold]
-    print(classification_report(gold, pred, mode='strict', scheme=BILOU))
+    print(classification_report(gold, pred, mode="strict", scheme=BILOU))
     return gold, pred
 
-def calc_metric(gold, pred, sort_by_metric):
-    metrics_str = classification_report(gold, pred, mode='strict', scheme=BILOU)
+
+def calc_metric(
+    gold: List[str], pred: List[str], sort_by_metric: str = "netype"
+) -> pd.DataFrame:
+    metrics_str = classification_report(gold, pred, mode="strict", scheme=BILOU)
     metrics_str = "netype" + metrics_str
-    metrics_str = re.sub('[ ]+', ' ', metrics_str)
-    tpls = [l.strip().split(' ') for l in metrics_str.split('\n') if len(l.strip().split(' '))==5]
+    metrics_str = re.sub("[ ]+", " ", metrics_str)
+    tpls = [
+        l.strip().split(" ")
+        for l in metrics_str.split("\n")
+        if len(l.strip().split(" ")) == 5
+    ]
     header, data = tpls[0], tpls[1:]
     df = pd.DataFrame(data, columns=header)
     return df.sort_values(by=[sort_by_metric], ascending=False)
 
-def make_jsonl(conll_filepath='data/test.bio'):
+
+def make_jsonl(conll_filepath="data/test.bio"):
     sentences_test = make_sentences_from_conll(conll_filepath)
-    with open(conll_filepath + '.jsonl', 'w') as fp:
+    with open(conll_filepath + ".jsonl", "w") as fp:
         for sentence in sentences_test[1:]:
             text = sentence.text
-            jl = [text, {"entities": [[c.span[0], c.span[1], c.label] for c in sentence.chunks]}]
+            jl = [
+                text,
+                {
+                    "entities": [
+                        [c.span[0], c.span[1], c.label] for c in sentence.chunks
+                    ]
+                },
+            ]
             fp.write(json.dumps(jl, ensure_ascii=False))
-            fp.write('\n')
+            fp.write("\n")
+
+
+def download_conll_data(filepath: str = "test.bio"):
+    """conllフォーマットデータのダウンロード"""
+    filename = Path(filepath).name
+    url = f"https://github.com/megagonlabs/UD_Japanese-GSD/releases/download/v2.6-NE/{filename}"
+    response = requests.get(url)
+    if response.ok:
+        with open(filepath, "w") as fp:
+            fp.write(response.content.decode("utf8"))
+        return filepath
+
 
 if __name__ == "__main__":
-    import requests
-    from pathlib import Path
-
-    def download_conll_data(filepath):
-        """conllフォーマットデータのダウンロード"""
-        url = "https://raw.githubusercontent.com/Hironsan/IOB2Corpus/master/ja.wikipedia.conll"
-        response = requests.get(url)
-        if response.ok:
-            with open(filepath, "w") as fp:
-                fp.write(response.content.decode("utf8"))
-            return filepath
-
-    if download_conll_data("."):
+    filepath = "./test.bio"
+    if download_conll_data(filepath):
         # CoNLL2003 -> List[Sentence]
-        sentences = make_sentences_from_conll('ja.wikipedia.conll')
-        sentence0 = sentences[0]
-        print(sentence0)
-
-        # 文字列+スパン+固有表現ラベルデータ を tokenize&CoNLL2003-like形式に変換
-        # text, labels([start, end, label]) format
-        tokenizer = MecabTokenizer()
-        sentences_conll = sentence_to_conll(sentences, tokenizer)
-
-        # 元データと比較（分かち書きの過程で空白などが除去され得るので厳密一致はしない）
-        sentence_column_org = [(token.text, token.label) for token in sentence0]
-        print(list(zip(sentences_conll, sentence_column_org)))
+        gold, pred = evaluate_ginza(filepath, as_ontonote=True, retokenize=True)
+        df = calc_metric(gold, pred)
+        print(df)
