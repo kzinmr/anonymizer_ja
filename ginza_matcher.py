@@ -309,7 +309,7 @@ def calc_metric(
     ]
     header, data = tpls[0], tpls[1:]
     df = pd.DataFrame(data, columns=header)
-    return df.sort_values(by=[sort_by_metric], ascending=False)
+    return df.sort_values(by=[sort_by_metric], ascending=True)
 
 
 def make_jsonl(conll_filepath="data/test.bio"):
